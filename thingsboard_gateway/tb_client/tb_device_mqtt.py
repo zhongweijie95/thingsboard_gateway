@@ -24,6 +24,7 @@ import paho.mqtt.client as paho
 from simplejson import dumps
 
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
+from thingsboard_gateway.tb_client.proto.transport_pb2 import *
 
 RPC_RESPONSE_TOPIC = 'v1/devices/me/rpc/response/'
 RPC_REQUEST_TOPIC = 'v1/devices/me/rpc/request/'
@@ -260,7 +261,8 @@ class TBDeviceMqttClient:
         self.__device_on_server_side_rpc_response = handler
 
     def publish_data(self, data, topic, qos):
-        data = dumps(data)
+        if not isinstance(data, bytes):
+            data = dumps(data)
         if qos is None:
             qos = self.quality_of_service
         if qos not in (0, 1):
@@ -272,6 +274,7 @@ class TBDeviceMqttClient:
         quality_of_service = quality_of_service if quality_of_service is not None else self.quality_of_service
         if not isinstance(telemetry, list) and not (isinstance(telemetry, dict) and telemetry.get("ts") is not None):
             telemetry = [telemetry]
+        # proto_msg = self.__convert_telemetry_to_proto(telemetry)
         return self.publish_data(telemetry, TELEMETRY_TOPIC, quality_of_service)
 
     def send_attributes(self, attributes, quality_of_service=None):

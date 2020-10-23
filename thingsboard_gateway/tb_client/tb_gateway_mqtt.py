@@ -18,13 +18,30 @@ from simplejson import dumps
 
 from thingsboard_gateway.tb_client.tb_device_mqtt import TBDeviceMqttClient
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
+from thingsboard_gateway.tb_client.proto.transport_pb2 import *
 
-GATEWAY_ATTRIBUTES_TOPIC = "v1/gateway/attributes"
-GATEWAY_ATTRIBUTES_REQUEST_TOPIC = "v1/gateway/attributes/request"
-GATEWAY_ATTRIBUTES_RESPONSE_TOPIC = "v1/gateway/attributes/response"
-GATEWAY_MAIN_TOPIC = "v1/gateway/"
-GATEWAY_RPC_TOPIC = "v1/gateway/rpc"
-GATEWAY_RPC_RESPONSE_TOPIC = "v1/gateway/rpc/response"
+PROTO_REQUEST = "/req"
+PROTO_RESPONSE = "/rsp"
+PROTO_RPC = "/rpc"
+PROTO_CONNECT = "/con"
+PROTO_DISCONNECT = "/dis"
+PROTO_TELEMETRY = "/tel"
+PROTO_ATTRIBUTES = "/atr"
+PROTO_CLAIM = "/clm"
+PROTO_ACTION = "/act"
+PROTO_ATTRIBUTES_RESPONSE = PROTO_ATTRIBUTES + PROTO_RESPONSE
+PROTO_ATTRIBUTES_REQUEST = PROTO_ATTRIBUTES + PROTO_REQUEST
+GATEWAY_MAIN_TOPIC = "v2/g"
+GATEWAY_CONNECT_TOPIC = GATEWAY_MAIN_TOPIC + PROTO_CONNECT
+GATEWAY_DISCONNECT_TOPIC = GATEWAY_MAIN_TOPIC + PROTO_DISCONNECT
+GATEWAY_ATTRIBUTES_TOPIC = GATEWAY_MAIN_TOPIC + PROTO_ATTRIBUTES
+GATEWAY_TELEMETRY_TOPIC = GATEWAY_MAIN_TOPIC + PROTO_TELEMETRY
+# TODO Add Claim device processing
+# GATEWAY_CLAIM_TOPIC = GATEWAY_MAIN_TOPIC + PROTO_CLAIM
+GATEWAY_RPC_TOPIC = GATEWAY_MAIN_TOPIC + PROTO_RPC
+GATEWAY_DEVICE_ACTION_TOPIC = GATEWAY_MAIN_TOPIC + PROTO_ACTION
+GATEWAY_ATTRIBUTES_REQUEST_TOPIC = GATEWAY_MAIN_TOPIC + PROTO_ATTRIBUTES_REQUEST
+GATEWAY_ATTRIBUTES_RESPONSE_TOPIC = GATEWAY_MAIN_TOPIC + PROTO_ATTRIBUTES_RESPONSE
 
 log = logging.getLogger("tb_connection")
 
@@ -40,6 +57,7 @@ class TBGatewayMqttClient(TBDeviceMqttClient):
         self.__max_sub_id = 0
         self.__sub_dict = {}
         self.__connected_devices = set("*")
+        self.devices_actions_handler = None
         self.devices_server_side_rpc_request_handler = None
         self._client.on_connect = self._on_connect
         self._client.on_message = self._on_message
@@ -78,6 +96,9 @@ class TBGatewayMqttClient(TBDeviceMqttClient):
         self._on_decoded_message(content, message)
 
     def _on_decoded_message(self, content, message):
+        if message.topic.startswith(GATEWAY_DEVICE_ACTION_TOPIC):
+            if self.devices_actions_handler is not None:
+                self.devices_actions_handler(self, content)
         if message.topic.startswith(GATEWAY_ATTRIBUTES_RESPONSE_TOPIC):
             with self._lock:
                 req_id = content["id"]
@@ -132,15 +153,23 @@ class TBGatewayMqttClient(TBDeviceMqttClient):
         return self.__request_attributes(device_name, keys, callback, True)
 
     def gw_send_attributes(self, device, attributes, quality_of_service=1):
-        return self.publish_data({device: attributes}, GATEWAY_MAIN_TOPIC + "attributes", quality_of_service)
+        return self.publish_data({device: attributes}, GATEWAY_ATTRIBUTES_TOPIC, quality_of_service)
 
     def gw_send_telemetry(self, device, telemetry, quality_of_service=1):
         if not isinstance(telemetry, list) and not (isinstance(telemetry, dict) and telemetry.get("ts") is not None):
             telemetry = [telemetry]
-        return self.publish_data({device: telemetry}, GATEWAY_MAIN_TOPIC + "telemetry", quality_of_service, )
+        proto_msg = TelemetryMsg()
+        proto_msg.deviceName = device
+        proto_msg.msg = self.__convert_telemetry_to_proto(telemetry)
+        return self.publish_data(proto_msg.SerializeToString(), GATEWAY_TELEMETRY_TOPIC, quality_of_service)
 
     def gw_connect_device(self, device_name, device_type):
-        info = self._client.publish(topic=GATEWAY_MAIN_TOPIC + "connect", payload=dumps({"device": device_name, "type": device_type}), qos=self.quality_of_service)
+        proto_msg = ConnectMsg()
+        proto_msg.deviceName = device_name
+        proto_msg.deviceType = device_type
+        info = self._client.publish(topic=GATEWAY_CONNECT_TOPIC,
+                                    payload=proto_msg.SerializeToString(),
+                                    qos=self.quality_of_service)
         self.__connected_devices.add(device_name)
         # if self.gateway:
         #     self.gateway.on_device_connected(device_name, self.__devices_server_side_rpc_request_handler)
@@ -148,7 +177,10 @@ class TBGatewayMqttClient(TBDeviceMqttClient):
         return info
 
     def gw_disconnect_device(self, device_name):
-        info = self._client.publish(topic=GATEWAY_MAIN_TOPIC + "disconnect", payload=dumps({"device": device_name}),
+        proto_msg = DisconnectMsg()
+        proto_msg.deviceName = device_name
+        info = self._client.publish(topic=GATEWAY_DISCONNECT_TOPIC,
+                                    payload=proto_msg.SerializeToString(),
                                     qos=self.quality_of_service)
         self.__connected_devices.remove(device_name)
         # if self.gateway:
@@ -198,3 +230,36 @@ class TBGatewayMqttClient(TBDeviceMqttClient):
                                     dumps({"device": device, "id": req_id, "data": resp}),
                                     qos=quality_of_service)
         return info
+
+    @staticmethod
+    def __convert_telemetry_to_proto(telemetry):
+        result_msg = PostTelemetryMsg()
+        ts_kv_list_proto = TsKvListProto()
+        TsKvListProto.ts = 0
+        values = telemetry
+        if isinstance(telemetry, dict) and telemetry.get('ts') is not None:
+            TsKvListProto.ts = telemetry['ts']
+            values = telemetry['values']
+        if not isinstance(values, list):
+            values = [values]
+        for msg in values:
+            key_value_proto = KeyValueProto()
+            for k, v in msg.items():
+                if isinstance(v, bool):
+                    key_value_proto.bool_v = v
+                    key_value_proto.type = KeyValueType.Value('BOOLEAN_V')
+                elif isinstance(v, int):
+                    key_value_proto.long_v = v
+                    key_value_proto.type = KeyValueType.Value('LONG_V')
+                elif isinstance(v, float):
+                    key_value_proto.double_v = v
+                    key_value_proto.type = KeyValueType.Value('DOUBLE_V')
+                elif isinstance(v, str):
+                    key_value_proto.string_v = v
+                    key_value_proto.type = KeyValueType.Value('STRING_V')
+                else:
+                    key_value_proto = dumps(v)
+                key_value_proto.key = k
+                ts_kv_list_proto.kv.append(key_value_proto)
+        result_msg.tsKvList.append(ts_kv_list_proto)
+        return result_msg
