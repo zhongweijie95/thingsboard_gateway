@@ -21,11 +21,13 @@ from threading import Thread
 
 import paho.mqtt.client as paho
 
-from simplejson import dumps
+from simplejson import dumps, loads
 
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
+from google.protobuf import json_format
 from thingsboard_gateway.tb_client.proto.transport_pb2 import *
 
+PAYLOAD_TYPE_TOPIC = "/payload"
 RPC_RESPONSE_TOPIC = 'v1/devices/me/rpc/response/'
 RPC_REQUEST_TOPIC = 'v1/devices/me/rpc/request/'
 ATTRIBUTES_TOPIC = 'v1/devices/me/attributes'
@@ -34,6 +36,7 @@ ATTRIBUTES_TOPIC_RESPONSE = 'v1/devices/me/attributes/response/'
 TELEMETRY_TOPIC = 'v1/devices/me/telemetry'
 log = logging.getLogger("tb_connection")
 
+PAYLOAD_TYPE_CHANGED = False
 
 class TBTimeoutException(Exception):
     pass
@@ -126,6 +129,9 @@ class TBDeviceMqttClient:
         log.debug("Disconnected client: %s, user data: %s, result code: %s", str(client), str(userdata), str(result_code))
         log.setLevel(prev_level)
 
+    def change_payload_type(self, payload_type="PROTOBUF"):
+        self._client.publish(PAYLOAD_TYPE_TOPIC, "{\"type\": \"%s\"}" % (payload_type.upper(), ), 1)
+
     def _on_connect(self, client, userdata, flags, result_code, *extra_params):
         result_codes = {
             1: "incorrect protocol version",
@@ -181,20 +187,26 @@ class TBDeviceMqttClient:
         self.stopped = True
 
     def _on_message(self, client, userdata, message):
-        content = TBUtility.decode(message)
-        self._on_decoded_message(content, message)
+        # content = TBUtility.decode(message)
+        self._on_decoded_message(message)
 
-    def _on_decoded_message(self, content, message):
+    def _on_decoded_message(self, message):
         if message.topic.startswith(RPC_REQUEST_TOPIC):
+            content = self._convert_response_payload_to_proto_object(message, ToDeviceRpcRequestMsg)
+            content = self._convert_to_json(content)
             request_id = message.topic[len(RPC_REQUEST_TOPIC):len(message.topic)]
             if self.__device_on_server_side_rpc_response:
                 self.__device_on_server_side_rpc_response(request_id, content)
         elif message.topic.startswith(RPC_RESPONSE_TOPIC):
+            content = self._convert_response_payload_to_proto_object(message, ToDeviceRpcResponseMsg)
+            content = self._convert_to_json(content)
             with self._lock:
                 request_id = int(message.topic[len(RPC_RESPONSE_TOPIC):len(message.topic)])
                 callback = self.__device_client_rpc_dict.pop(request_id)
             callback(request_id, content, None)
         elif message.topic == ATTRIBUTES_TOPIC:
+            content = self._convert_response_payload_to_proto_object(message, AttributeUpdateNotificationMsg)
+            content = self._convert_to_json(content)
             dict_results = []
             with self._lock:
                 # callbacks for everything
@@ -215,6 +227,8 @@ class TBDeviceMqttClient:
             for res in dict_results:
                 res(content, None)
         elif message.topic.startswith(ATTRIBUTES_TOPIC_RESPONSE):
+            content = self._convert_response_payload_to_proto_object(message, GetAttributeResponseMsg)
+            content = self._convert_to_json(content)
             with self._lock:
                 req_id = int(message.topic[len(ATTRIBUTES_TOPIC+"/response/"):])
                 # pop callback and use it
@@ -274,8 +288,8 @@ class TBDeviceMqttClient:
         quality_of_service = quality_of_service if quality_of_service is not None else self.quality_of_service
         if not isinstance(telemetry, list) and not (isinstance(telemetry, dict) and telemetry.get("ts") is not None):
             telemetry = [telemetry]
-        # proto_msg = self.__convert_telemetry_to_proto(telemetry)
-        return self.publish_data(telemetry, TELEMETRY_TOPIC, quality_of_service)
+        proto_msg = self._convert_telemetry_to_proto(telemetry)
+        return self.publish_data(proto_msg.SerializeToString(), TELEMETRY_TOPIC, quality_of_service)
 
     def send_attributes(self, attributes, quality_of_service=None):
         quality_of_service = quality_of_service if quality_of_service is not None else self.quality_of_service
@@ -305,28 +319,20 @@ class TBDeviceMqttClient:
             return self.__device_max_sub_id
 
     def request_attributes(self, client_keys=None, shared_keys=None, callback=None):
-        msg = {}
+        proto_msg = GetAttributeRequestMsg()
         if client_keys:
-            tmp = ""
-            for key in client_keys:
-                tmp += key + ","
-            tmp = tmp[:len(tmp) - 1]
-            msg.update({"clientKeys": tmp})
+            proto_msg.clientAttributeNames.extend(client_keys)
         if shared_keys:
-            tmp = ""
-            for key in shared_keys:
-                tmp += key + ","
-            tmp = tmp[:len(tmp) - 1]
-            msg.update({"sharedKeys": tmp})
+            proto_msg.sharedAttributeNames.extend(shared_keys)
 
         ts_in_millis = int(round(time.time() * 1000))
 
-        attr_request_number = self._add_attr_request_callback(callback)
+        proto_msg.requestId = self._add_attr_request_callback(callback)
 
         info = self._client.publish(topic=ATTRIBUTES_TOPIC_REQUEST + str(self.__attr_request_number),
-                                    payload=dumps(msg),
+                                    payload=proto_msg.SerializeToString(),
                                     qos=self.quality_of_service)
-        self._add_timeout(attr_request_number, ts_in_millis + 30000)
+        self._add_timeout(proto_msg.requestId, ts_in_millis + 30000)
         return info
 
     def _add_timeout(self, attr_request_number, timestamp):
@@ -361,3 +367,73 @@ class TBDeviceMqttClient:
                         callback(None, TBTimeoutException("Timeout while waiting for a reply from ThingsBoard!"))
             else:
                 time.sleep(0.01)
+
+    def _convert_telemetry_to_proto(self, telemetry):
+        ts_kv_list_proto = TsKvListProto()
+        for msg in telemetry:
+            if msg.get('ts') is not None:
+                ts_kv_list_proto.ts = msg['ts']
+                for k, v in msg['values'].items():
+                    ts_kv_list_proto.kv.append(self.__convert_to_key_value_proto(k, v))
+            else:
+                ts_kv_list_proto.ts = int(round(time.time()*1000))
+                for k, v in msg.items():
+                    ts_kv_list_proto.kv.append(self.__convert_to_key_value_proto(k, v))
+        return ts_kv_list_proto
+
+    def _convert_attributes_to_proto(self, msg, post_attributes_msg_kv):
+        key_value_proto = KeyValueProto()
+        for k, v in msg.items():
+            self.__convert_to_key_value_proto(k, v, key_value_proto)
+        post_attributes_msg_kv.append(key_value_proto)
+
+    @staticmethod
+    def __convert_to_key_value_proto(key, value, key_value_proto=KeyValueProto()):
+        if isinstance(value, bool):
+            key_value_proto.bool_v = value
+            key_value_proto.type = KeyValueType.Value('BOOLEAN_V')
+        elif isinstance(value, int):
+            key_value_proto.long_v = value
+            key_value_proto.type = KeyValueType.Value('LONG_V')
+        elif isinstance(value, float):
+            key_value_proto.double_v = value
+            key_value_proto.type = KeyValueType.Value('DOUBLE_V')
+        elif isinstance(value, str):
+            key_value_proto.string_v = value
+            key_value_proto.type = KeyValueType.Value('STRING_V')
+        else:
+            key_value_proto = dumps(value)
+        key_value_proto.key = key
+        return key_value_proto
+
+    @staticmethod
+    def _convert_response_payload_to_proto_object(message, cls):
+        result = cls()
+        result.ParseFromString(message.payload)
+        return result
+
+    def _convert_to_json(self, proto_message):
+        result = dict()
+        converted_message = json_format.MessageToDict(proto_message, True, True)
+        if isinstance(proto_message, GetAttributeResponseMsg):
+            result['requestId'] = converted_message.get('requestId')
+            types = ['clientAttributeList', 'sharedAttributeList']
+            result.update(**self._get_correct_key_value_by_attribute_type(converted_message, types))
+        elif isinstance(proto_message, AttributeUpdateNotificationMsg):
+            types = ['sharedUpdated', 'sharedDeleted']
+            result.update(**self._get_correct_key_value_by_attribute_type(converted_message, types))
+        elif isinstance(proto_message, ToDeviceRpcResponseMsg):
+            return converted_message
+        elif isinstance(proto_message, ToDeviceRpcRequestMsg):
+            result["requestId"] = converted_message.get("requestId", 0)
+            result["method"] = converted_message["methodName"]
+            result["params"] = loads(converted_message["params"])
+
+        return result
+
+    @staticmethod
+    def _get_correct_key_value_by_attribute_type(converted_message, types):
+        result = {}
+        for attribute_type in types:
+            result[attribute_type] = {attributes['kv']['key']: attributes['kv'][attributes['kv']['type'].lower()] for attributes in converted_message[attribute_type]} if converted_message[attribute_type] else {}
+        return result

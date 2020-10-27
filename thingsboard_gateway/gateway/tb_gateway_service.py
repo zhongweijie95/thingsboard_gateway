@@ -134,6 +134,7 @@ class TBGatewayService:
         self._send_thread.start()
         log.info("Gateway started.")
 
+        self.tb_client.client.change_payload_type()
         try:
             gateway_statistic_send = 0
             while not self.stopped:
