@@ -12,30 +12,28 @@
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
 
-from sys import getsizeof, executable, argv
-from os import listdir, path, execv, pathsep, system
-from time import time, sleep
 import logging
 import logging.config
 import logging.handlers
+from os import execv, listdir, path, pathsep, system
 from queue import Queue
 from random import choice
 from string import ascii_lowercase
-from threading import Thread, RLock
+from sys import argv, executable, getsizeof
+from threading import RLock, Thread
+from time import sleep, time
 
+from simplejson import dumps, load, loads
 from yaml import safe_load
-from simplejson import load, dumps, loads
 
-from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 from thingsboard_gateway.gateway.tb_client import TBClient
-from thingsboard_gateway.gateway.tb_updater import TBUpdater
-from thingsboard_gateway.gateway.tb_logger import TBLoggerHandler
-from thingsboard_gateway.storage.memory_event_storage import MemoryEventStorage
-from thingsboard_gateway.storage.file_event_storage import FileEventStorage
 from thingsboard_gateway.gateway.tb_gateway_remote_configurator import RemoteConfigurator
+from thingsboard_gateway.gateway.tb_logger import TBLoggerHandler
 from thingsboard_gateway.gateway.tb_remote_shell import RemoteShell
-
-
+from thingsboard_gateway.gateway.tb_updater import TBUpdater
+from thingsboard_gateway.storage.file_event_storage import FileEventStorage
+from thingsboard_gateway.storage.memory_event_storage import MemoryEventStorage
+from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 
 log = logging.getLogger('service')
 main_handler = logging.handlers.MemoryHandler(-1)
@@ -574,13 +572,13 @@ class TBGatewayService:
                 if success_sent:
                     rpc_response["success"] = True
             if device is not None and success_sent is not None:
-                self.tb_client.client.gw_send_rpc_reply(device, req_id, dumps(rpc_response), quality_of_service=quality_of_service)
+                self.tb_client.client.gw_send_rpc_reply(device, int(req_id), dumps(rpc_response), quality_of_service=quality_of_service)
             elif device is not None and req_id is not None and content is not None:
-                self.tb_client.client.gw_send_rpc_reply(device, req_id, content, quality_of_service=quality_of_service)
+                self.tb_client.client.gw_send_rpc_reply(device, int(req_id), content, quality_of_service=quality_of_service)
             elif device is None and success_sent is not None:
-                self.tb_client.client.send_rpc_reply(req_id, dumps(rpc_response), quality_of_service=quality_of_service, wait_for_publish=wait_for_publish)
+                self.tb_client.client.send_rpc_reply(int(req_id), dumps(rpc_response), quality_of_service=quality_of_service, wait_for_publish=wait_for_publish)
             elif device is None and content is not None:
-                self.tb_client.client.send_rpc_reply(req_id, content, quality_of_service=quality_of_service, wait_for_publish=wait_for_publish)
+                self.tb_client.client.send_rpc_reply(int(req_id), content, quality_of_service=quality_of_service, wait_for_publish=wait_for_publish)
             self.__rpc_reply_sent = False
         except Exception as e:
             log.exception(e)

@@ -17,6 +17,7 @@ import time
 
 from simplejson import dumps
 
+from google.protobuf import json_format
 from thingsboard_gateway.tb_client.proto.transport_pb2 import *
 from thingsboard_gateway.tb_client.tb_device_mqtt import TBDeviceMqttClient
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
@@ -94,17 +95,22 @@ class TBGatewayMqttClient(TBDeviceMqttClient):
         return True if self._gw_subscriptions else False
 
     def _on_message(self, client, userdata, message):
-        content = TBUtility.decode(message)
         super()._on_decoded_message(message)
         self._on_decoded_message(message)
 
     def _on_decoded_message(self, message):
         if message.topic.startswith(GATEWAY_DEVICE_ACTION_TOPIC):
             content = self._convert_response_payload_to_proto_object(message, GatewayActionMsg)
+            content = self._convert_to_json(content)
+            if content["action"] == "DELETED":
+                device_name = content["device"]
+                self.__connected_devices.remove(device_name)
+                log.info("Device %s was removed on ThingsBoard!")
             if self.devices_actions_handler is not None:
                 self.devices_actions_handler(self, content)
         if message.topic.startswith(GATEWAY_ATTRIBUTES_RESPONSE_TOPIC):
-            content = self._convert_response_payload_to_proto_object(message, GatewayAttributesMsg)
+            content = self._convert_response_payload_to_proto_object(message, GatewayAttributeResponseMsg)
+            content = self._convert_to_json(content)
             with self._lock:
                 req_id = content["id"]
                 # pop callback and use it
@@ -114,6 +120,7 @@ class TBGatewayMqttClient(TBDeviceMqttClient):
                     log.error("Unable to find callback to process attributes response from TB")
         elif message.topic == GATEWAY_ATTRIBUTES_TOPIC:
             content = self._convert_response_payload_to_proto_object(message, GatewayAttributeUpdateNotificationMsg)
+            content = self._convert_to_json(content)
             with self._lock:
                 # callbacks for everything
                 if self.__sub_dict.get("*|*"):
@@ -132,6 +139,7 @@ class TBGatewayMqttClient(TBDeviceMqttClient):
                             self.__sub_dict[target][sub_id](content)
         elif message.topic == GATEWAY_RPC_TOPIC:
             content = self._convert_response_payload_to_proto_object(message, GatewayRpcResponseMsg)
+            content = self._convert_to_json(content)
             if self.devices_server_side_rpc_request_handler:
                 self.devices_server_side_rpc_request_handler(self, content)
 
@@ -245,3 +253,25 @@ class TBGatewayMqttClient(TBDeviceMqttClient):
         ts_kv_list_proto = super()._convert_telemetry_to_proto(telemetry)
         telemetry_msg.msg.tsKvList.append(ts_kv_list_proto)
         return telemetry_msg
+
+    def _convert_to_json(self, proto_message):
+        result = super()._convert_to_json(proto_message)
+        converted_message = json_format.MessageToDict(proto_message, True, True)
+        if not result:
+            if isinstance(proto_message, GatewayAttributeResponseMsg):
+                result["device"] = converted_message["deviceName"]
+                types = ['clientAttributeList', 'sharedAttributeList']
+                correct_mapping = {'clientAttributeList': 'client', 'sharedAttributeList': 'shared'}
+                result.update(**self._get_correct_key_value_by_attribute_type(converted_message, types, correct_mapping))
+            elif isinstance(proto_message, GatewayAttributeUpdateNotificationMsg):
+                result["device"] = converted_message["deviceName"]
+                types = ['sharedUpdated', 'sharedDeleted']
+                result.update(**self._get_correct_key_value_by_attribute_type(converted_message["notificationMsg"], types, {"sharedUpdated": "shared"})["shared"])
+            elif isinstance(proto_message, GatewayRpcResponseMsg):
+                result["device"] = converted_message["deviceName"]
+                result["id"] = converted_message["id"]
+                result["data"] = converted_message["data"]
+            elif isinstance(proto_message, GatewayActionMsg):
+                result["device"] = converted_message["msg"]["deviceName"]
+                result["action"] = converted_message["msg"]["action"]
+        return result

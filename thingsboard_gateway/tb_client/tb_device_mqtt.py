@@ -257,7 +257,10 @@ class TBDeviceMqttClient:
         if quality_of_service not in (0, 1):
             log.error("Quality of service (qos) value must be 0 or 1")
             return None
-        info = self._client.publish(RPC_RESPONSE_TOPIC + req_id, resp, qos=quality_of_service)
+        proto_msg = ToServerRpcResponseMsg()
+        proto_msg.requestId = req_id
+        proto_msg.payload = resp
+        info = self._client.publish(RPC_RESPONSE_TOPIC + str(req_id), proto_msg.SerializeToString(), qos=quality_of_service)
         if wait_for_publish:
             info.wait_for_publish()
 
@@ -418,10 +421,11 @@ class TBDeviceMqttClient:
         if isinstance(proto_message, GetAttributeResponseMsg):
             result['requestId'] = converted_message.get('requestId')
             types = ['clientAttributeList', 'sharedAttributeList']
-            result.update(**self._get_correct_key_value_by_attribute_type(converted_message, types))
+            correct_mapping = {'clientAttributeList': 'client', 'sharedAttributeList': 'shared'}
+            result.update(**self._get_correct_key_value_by_attribute_type(converted_message, types, correct_mapping))
         elif isinstance(proto_message, AttributeUpdateNotificationMsg):
-            types = ['sharedUpdated', 'sharedDeleted']
-            result.update(**self._get_correct_key_value_by_attribute_type(converted_message, types))
+            types = ['sharedUpdated']
+            result.update(**self._get_correct_key_value_by_attribute_type(converted_message, types, {"sharedUpdated": "shared"})["shared"])
         elif isinstance(proto_message, ToDeviceRpcResponseMsg):
             return converted_message
         elif isinstance(proto_message, ToDeviceRpcRequestMsg):
@@ -432,8 +436,8 @@ class TBDeviceMqttClient:
         return result
 
     @staticmethod
-    def _get_correct_key_value_by_attribute_type(converted_message, types):
+    def _get_correct_key_value_by_attribute_type(converted_message, types, correct_mapping):
         result = {}
         for attribute_type in types:
-            result[attribute_type] = {attributes['kv']['key']: attributes['kv'][attributes['kv']['type'].lower()] for attributes in converted_message[attribute_type]} if converted_message[attribute_type] else {}
+            result[correct_mapping[attribute_type]] = {attributes['kv']['key']: attributes['kv'][attributes['kv']['type'].lower()] for attributes in converted_message[attribute_type]} if converted_message[attribute_type] else {}
         return result
