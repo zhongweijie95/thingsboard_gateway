@@ -17,7 +17,8 @@ from os import path, listdir
 from inspect import getmembers, isclass
 from importlib import util
 from logging import getLogger
-from simplejson import dumps, loads, JSONDecodeError
+from ujson import dumps, loads
+from json import JSONDecodeError
 from jsonpath_rw import parse
 from platform import system
 
@@ -138,11 +139,17 @@ class TBUtility:
                 else:
                     full_value = body.get(target_str.split()[0])
             elif isinstance(body, (dict, list)):
+                if isinstance(body, dict):
+                    body = [body]
                 try:
-                    jsonpath_expression = parse(target_str)
-                    jsonpath_match = jsonpath_expression.find(body)
-                    if jsonpath_match:
-                        full_value = jsonpath_match[0].value
+                    for body_element in body:
+                        if body_element.get(expression) is None:
+                            jsonpath_expression = parse(target_str)
+                            jsonpath_match = jsonpath_expression.find(body_element)
+                            if jsonpath_match:
+                                full_value = jsonpath_match[0].value
+                        else:
+                            full_value = body_element[expression]
                 except Exception as e:
                     log.debug(e)
             elif isinstance(body, (str, bytes)):

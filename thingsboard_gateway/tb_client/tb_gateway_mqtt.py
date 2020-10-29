@@ -15,7 +15,7 @@
 import logging
 import time
 
-from simplejson import dumps
+from ujson import dumps
 
 from google.protobuf import json_format
 from thingsboard_gateway.tb_client.proto.transport_pb2 import *

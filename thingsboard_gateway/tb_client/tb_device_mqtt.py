@@ -21,7 +21,7 @@ from threading import Thread
 
 import paho.mqtt.client as paho
 
-from simplejson import dumps, loads
+from ujson import dumps, loads
 
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 from google.protobuf import json_format
@@ -84,6 +84,7 @@ class TBPublishInfo:
 class TBDeviceMqttClient:
     def __init__(self, host, port=1883, token=None, quality_of_service=None):
         self._client = paho.Client()
+        self._client.max_queued_messages_set(0)
         self.quality_of_service = quality_of_service if quality_of_service is not None else 1
         self.__host = host
         self.__port = port
@@ -146,6 +147,7 @@ class TBDeviceMqttClient:
         if result_code == 0:
             self.__is_connected = True
             log.info("connection SUCCESS")
+            self.change_payload_type()
             self._client.subscribe(ATTRIBUTES_TOPIC, qos=self.quality_of_service)
             self._client.subscribe(ATTRIBUTES_TOPIC + "/response/+", qos=self.quality_of_service)
             self._client.subscribe(RPC_REQUEST_TOPIC + '+', qos=self.quality_of_service)
@@ -369,7 +371,7 @@ class TBDeviceMqttClient:
                     if callback is not None:
                         callback(None, TBTimeoutException("Timeout while waiting for a reply from ThingsBoard!"))
             else:
-                time.sleep(0.01)
+                time.sleep(0.1)
 
     def _convert_telemetry_to_proto(self, telemetry):
         ts_kv_list_proto = TsKvListProto()
@@ -388,7 +390,7 @@ class TBDeviceMqttClient:
         key_value_proto = KeyValueProto()
         for k, v in msg.items():
             self.__convert_to_key_value_proto(k, v, key_value_proto)
-        post_attributes_msg_kv.append(key_value_proto)
+            post_attributes_msg_kv.append(key_value_proto)
 
     @staticmethod
     def __convert_to_key_value_proto(key, value, key_value_proto=KeyValueProto()):

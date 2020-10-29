@@ -19,7 +19,7 @@ from logging import getLogger
 from pkg_resources import get_distribution
 from threading import Thread
 from time import time, sleep
-from simplejson import loads
+from ujson import loads
 
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 
