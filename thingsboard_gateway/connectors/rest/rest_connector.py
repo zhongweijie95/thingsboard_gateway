@@ -5,7 +5,7 @@ from random import choice
 from time import time
 from re import fullmatch
 from queue import Queue
-from simplejson import loads, JSONDecodeError
+from ujson import loads, JSONDecodeError
 
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 

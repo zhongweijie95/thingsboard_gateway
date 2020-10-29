@@ -24,7 +24,7 @@ from unittest.mock import Mock
 
 import thingsboard_gateway
 from can import Notifier, BufferedReader, Bus, Message
-from simplejson import load
+from ujson import load
 
 from thingsboard_gateway.connectors.can.can_connector import CanConnector
 

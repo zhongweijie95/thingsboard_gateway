@@ -20,7 +20,7 @@ from random import choice
 from threading import Thread
 from string import ascii_lowercase
 import regex
-from simplejson import dumps
+from ujson import dumps
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 try:
     from opcua import Client, ua

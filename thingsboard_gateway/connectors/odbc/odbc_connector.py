@@ -19,7 +19,7 @@ from time import sleep
 from random import choice
 from string import ascii_lowercase
 from threading import Thread
-from simplejson import dumps, load
+from ujson import dumps, load
 
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 

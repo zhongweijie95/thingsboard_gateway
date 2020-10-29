@@ -5,7 +5,7 @@ from unittest.mock import Mock
 from os import path
 from time import sleep
 import thingsboard_gateway
-from simplejson import load
+from ujson import load
 
 from thingsboard_gateway.gateway.tb_gateway_service import DEFAULT_CONNECTORS
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility

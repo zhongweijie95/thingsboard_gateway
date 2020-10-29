@@ -14,7 +14,7 @@
 
 import os
 import time
-from simplejson import dump
+from ujson import dump
 from thingsboard_gateway.storage.event_storage import EventStorage, log
 from thingsboard_gateway.storage.event_storage_files import EventStorageFiles
 from thingsboard_gateway.storage.event_storage_writer import EventStorageWriter, DataFileCountError

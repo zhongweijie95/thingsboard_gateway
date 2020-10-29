@@ -20,7 +20,7 @@ from time import sleep
 from unittest.mock import Mock, call
 
 import pyodbc
-from simplejson import load
+from ujson import load
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 
 import thingsboard_gateway

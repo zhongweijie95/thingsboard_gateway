@@ -13,19 +13,56 @@
 #     limitations under the License.
 
 from re import search
-from time import time
+from time import time, sleep
 
-from simplejson import dumps
+from ujson import dumps
 
 from thingsboard_gateway.connectors.mqtt.mqtt_uplink_converter import MqttUplinkConverter, log
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 
+from queue import Queue, Empty, Full
+from threading import Thread
+
 
 class JsonMqttUplinkConverter(MqttUplinkConverter):
-    def __init__(self, config):
+    def __init__(self, config, connector_convert_callback):
         self.__config = config.get('converter')
+        self.__connector_convert_callback = connector_convert_callback
+        self.__processing_queue = Queue(self.__config.get("maxConverterQueueSize", 10000000))
+        self.__converter_threads = {}
+        self.__stopped = False
+        for thread_number in range(self.__config.get("converterThreads", 1)):
+            thread = Thread(daemon=True, name="Converting thread %i" % thread_number, target=self.__converting_threads_main)
+            self.__converter_threads[thread_number] = thread
+            thread.start()
 
     def convert(self, config, data):
+        try:
+            self.__processing_queue.put((config, data), True)
+        except Full:
+            log.error("maxConverterQueueSize (%i) is reached, cannot add message from topic %s to queue!", self.__processing_queue.maxsize, config)
+
+    def __converting_threads_main(self):
+        while not self.__stopped:
+            if not self.__processing_queue.empty():
+                try:
+                    if self.__stopped:
+                        break
+                    current_record = self.__processing_queue.get(True)
+                    result = self.__convert(*current_record)
+                    self.__connector_convert_callback(result, current_record[0])
+                except Empty:
+                    if self.__stopped:
+                        break
+            else:
+                if self.__stopped:
+                    break
+                sleep(.01)
+
+    def stop(self):
+        self.__stopped = True
+
+    def __convert(self, config, data):
         datatypes = {"attributes": "attributes",
                      "timeseries": "telemetry"}
         dict_result = {"deviceName": None, "deviceType": None, "attributes": [], "telemetry": []}

@@ -12,7 +12,7 @@
 #      See the License for the specific language governing permissions and
 #      limitations under the License.
 
-from simplejson import dumps, loads
+from ujson import dumps, loads
 from thingsboard_gateway.connectors.request.request_converter import RequestConverter, log
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 
