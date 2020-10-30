@@ -125,12 +125,14 @@ class MqttConnector(Connector, Thread):
         self._connected = False
         self.__stopped = False
         self.daemon = True
-        self.__processing_queue = Queue(self.config.get("maxIncomingMessageQueueSize", 100000))
+        self.__processing_queue = Queue(self.config.get("maxIncomingMessageQueueSize", 0))
         self.__connector_threads = {}
-        for thread_number in range(self.config.get("connectorThreads", 1)):
+        self.__workers_count = self.config.get("connectorWorkersCount", 1)
+        for thread_number in range(self.__workers_count):
             thread = Thread(daemon=True, name="Mqtt connector thread %i" % thread_number, target=self._on_message_processing_thread_main)
             self.__connector_threads[thread_number] = thread
             thread.start()
+        log.info("%i connector workers started.", self.__workers_count)
 
     def load_handlers(self, handler_flavor, mandatory_keys, accepted_handlers_list):
         if handler_flavor not in self.config:
@@ -337,7 +339,10 @@ class MqttConnector(Connector, Thread):
     def _on_message(self, client, userdata, message):
         self.statistics['MessagesReceived'] += 1
         content = TBUtility.decode(message)
-        self.__processing_queue.put((client, userdata, message, content), False)
+        if not self.__processing_queue.full():
+            self.__processing_queue.put((client, userdata, message, content))
+        else:
+            log.error("Connector queue is full, please decrease message flow or increase the size of the queue!")
 
     def _on_message_processing_thread_main(self):
         while not self.__stopped:

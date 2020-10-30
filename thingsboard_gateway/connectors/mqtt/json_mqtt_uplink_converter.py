@@ -28,13 +28,15 @@ class JsonMqttUplinkConverter(MqttUplinkConverter):
     def __init__(self, config, connector_convert_callback):
         self.__config = config.get('converter')
         self.__connector_convert_callback = connector_convert_callback
-        self.__processing_queue = Queue(self.__config.get("maxConverterQueueSize", 10000000))
+        self.__processing_queue = Queue(self.__config.get("converterMaxQueueSize", 10000000))
         self.__converter_threads = {}
         self.__stopped = False
-        for thread_number in range(self.__config.get("converterThreads", 1)):
+        self.__converter_workers = self.__config.get("converterWorkersCount", 1)
+        for thread_number in range(self.__converter_workers):
             thread = Thread(daemon=True, name="Converting thread %i" % thread_number, target=self.__converting_threads_main)
             self.__converter_threads[thread_number] = thread
             thread.start()
+        log.info("%i converter workers started.", self.__converter_workers)
 
     def convert(self, config, data):
         try:
@@ -48,7 +50,7 @@ class JsonMqttUplinkConverter(MqttUplinkConverter):
                 try:
                     if self.__stopped:
                         break
-                    current_record = self.__processing_queue.get(True)
+                    current_record = self.__processing_queue.get(False)
                     result = self.__convert(*current_record)
                     self.__connector_convert_callback(result, current_record[0])
                 except Empty:

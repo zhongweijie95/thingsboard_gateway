@@ -12,15 +12,18 @@
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
 
-from time import time
+from time import time, sleep
 from base64 import b64encode
 from io import BufferedWriter, FileIO
 from os import linesep, open as os_open, close as os_close, O_CREAT, O_EXCL
 from os.path import exists
+from queue import Queue, Full, Empty
+from threading import Thread
 
 from thingsboard_gateway.storage.file_event_storage import log
 from thingsboard_gateway.storage.event_storage_files import EventStorageFiles
 from thingsboard_gateway.storage.file_event_storage_settings import FileEventStorageSettings
+
 
 class DataFileCountError(Exception):
     pass
@@ -29,14 +32,40 @@ class DataFileCountError(Exception):
 class EventStorageWriter:
     def __init__(self, files: EventStorageFiles, settings: FileEventStorageSettings):
         self.files = files
+        self.__stopped = False
         self.settings = settings
         self.buffered_writer = None
         self.current_file = sorted(files.get_data_files())[-1]
         self.current_file_records_count = [0]
         self.previous_file_records_count = [0]
         self.get_number_of_records_in_file(self.current_file)
+        self.__processing_queue = Queue(settings.get_max_storage_queue_size())
+        self.working_thread = Thread(daemon=True, name="Storage writer worker", target=self.__main_worker_thread)
+        self.working_thread.start()
 
     def write(self, msg):
+        try:
+            self.__processing_queue.put(msg, False)
+        except Full:
+            log.error("max_storage_queue_size (%i) is reached, cannot add message to storage!", self.__processing_queue.maxsize)
+
+    def __main_worker_thread(self):
+        while True:
+            if not self.__processing_queue.empty():
+                try:
+                    if self.__stopped:
+                        break
+                    current_record = self.__processing_queue.get(False)
+                    result = self.__write(current_record)
+                except Empty:
+                    if self.__stopped:
+                        break
+            else:
+                if self.__stopped:
+                    break
+                sleep(.01)
+
+    def __write(self, msg):
         if len(self.files.data_files) <= self.settings.get_max_files_count():
             if self.current_file_records_count[0] >= self.settings.get_max_records_per_file() or not exists(self.settings.get_data_folder_path()+self.current_file):
                 try:
@@ -57,6 +86,8 @@ class EventStorageWriter:
                 if not exists(self.settings.get_data_folder_path()+self.current_file):
                     self.current_file = self.create_datafile()
                 self.buffered_writer = self.get_or_init_buffered_writer(self.current_file)
+                if self.buffered_writer.closed:
+                    self.buffered_writer = self.get_or_init_buffered_writer(self.current_file)
                 self.buffered_writer.write(encoded + linesep.encode('utf-8'))
                 self.current_file_records_count[0] += 1
                 if self.current_file_records_count[0] - self.previous_file_records_count[0] >= self.settings.get_max_records_between_fsync():
@@ -75,7 +106,7 @@ class EventStorageWriter:
     def get_or_init_buffered_writer(self, file):
         try:
             if self.buffered_writer is None or self.buffered_writer.closed:
-                self.buffered_writer = BufferedWriter(FileIO(self.settings.get_data_folder_path() + file, 'a'))
+                self.buffered_writer = BufferedWriter(FileIO(self.settings.get_data_folder_path() + file, 'a+'))
             return self.buffered_writer
         except IOError as e:
             log.error("Failed to initialize buffered writer! Error: %s", e)
