@@ -370,8 +370,6 @@ class TBGatewayService:
     def check_size(self, devices_data_in_event_pack):
         if devices_data_in_event_pack.__str__().__len__() >= 65000:
             self.__send_data(devices_data_in_event_pack)
-            # size = 0
-        # return size
 
     def __read_data_from_storage(self):
         devices_data_in_event_pack = OrderedDict()
@@ -397,28 +395,20 @@ class TBGatewayService:
                             if current_event.get("telemetry"):
                                 if isinstance(current_event["telemetry"], list):
                                     for item in current_event["telemetry"]:
-                                        # size += getsizeof(item)
-                                        # size = self.check_size(size, devices_data_in_event_pack)
                                         self.check_size(devices_data_in_event_pack)
                                         devices_data_in_event_pack[current_event["deviceName"]]["telemetry"].append(
                                             item)
                                 else:
-                                    # size += getsizeof(current_event["telemetry"])
-                                    # size = self.check_size(size, devices_data_in_event_pack)
                                     self.check_size(devices_data_in_event_pack)
                                     devices_data_in_event_pack[current_event["deviceName"]]["telemetry"].append(
                                         current_event["telemetry"])
                             if current_event.get("attributes"):
                                 if isinstance(current_event["attributes"], list):
                                     for item in current_event["attributes"]:
-                                        # size += getsizeof(item)
-                                        # size = self.check_size(size, devices_data_in_event_pack)
                                         self.check_size(devices_data_in_event_pack)
                                         devices_data_in_event_pack[current_event["deviceName"]]["attributes"].update(
                                             item.items())
                                 else:
-                                    # size += getsizeof(current_event["attributes"].items())
-                                    # size = self.check_size(size, devices_data_in_event_pack)
                                     self.check_size(devices_data_in_event_pack)
                                     devices_data_in_event_pack[current_event["deviceName"]]["attributes"].update(
                                         current_event["attributes"].items())
@@ -635,7 +625,6 @@ class TBGatewayService:
 
     def register_rpc_request_timeout(self, content, timeout, topic, cancel_method):
         self.__rpc_register_queue.put({"topic": topic, "data": (content, timeout, cancel_method)}, False)
-        # self.__rpc_requests_in_progress[topic] = (content, timeout, cancel_method)
 
     def cancel_rpc_request(self, rpc_request):
         content = self.rpc_requests_in_progress[rpc_request][0]
