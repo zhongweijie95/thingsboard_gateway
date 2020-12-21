@@ -25,6 +25,7 @@ GATEWAY_ATTRIBUTES_RESPONSE_TOPIC = "v1/gateway/attributes/response"
 GATEWAY_MAIN_TOPIC = "v1/gateway/"
 GATEWAY_RPC_TOPIC = "v1/gateway/rpc"
 GATEWAY_RPC_RESPONSE_TOPIC = "v1/gateway/rpc/response"
+GATEWAY_DEVICE_ACTION_TOPIC = "v1/gateway/action"
 
 log = logging.getLogger("tb_connection")
 
@@ -41,6 +42,7 @@ class TBGatewayMqttClient(TBDeviceMqttClient):
         self.__sub_dict = {}
         self.__connected_devices = set("*")
         self.devices_server_side_rpc_request_handler = None
+        self.devices_device_actions_handler = None
         self._client.on_connect = self._on_connect
         self._client.on_message = self._on_message
         self._client.on_subscribe = self._on_subscribe
@@ -54,6 +56,7 @@ class TBGatewayMqttClient(TBDeviceMqttClient):
             self._gw_subscriptions[int(self._client.subscribe(GATEWAY_ATTRIBUTES_TOPIC, qos=1)[1])] = GATEWAY_ATTRIBUTES_TOPIC
             self._gw_subscriptions[int(self._client.subscribe(GATEWAY_ATTRIBUTES_RESPONSE_TOPIC, qos=1)[1])] = GATEWAY_ATTRIBUTES_RESPONSE_TOPIC
             self._gw_subscriptions[int(self._client.subscribe(GATEWAY_RPC_TOPIC, qos=1)[1])] = GATEWAY_RPC_TOPIC
+            self._gw_subscriptions[int(self._client.subscribe(GATEWAY_DEVICE_ACTION_TOPIC, qos=1)[1])] = GATEWAY_DEVICE_ACTION_TOPIC
             # self._gw_subscriptions[int(self._client.subscribe(GATEWAY_RPC_RESPONSE_TOPIC)[1])] = GATEWAY_RPC_RESPONSE_TOPIC
 
     def _on_subscribe(self, client, userdata, mid, granted_qos):
@@ -106,6 +109,9 @@ class TBGatewayMqttClient(TBDeviceMqttClient):
         elif message.topic == GATEWAY_RPC_TOPIC:
             if self.devices_server_side_rpc_request_handler:
                 self.devices_server_side_rpc_request_handler(self, content)
+        elif message.topic == GATEWAY_DEVICE_ACTION_TOPIC:
+            if self.devices_device_actions_handler is not None:
+                self.devices_device_actions_handler(content)
 
     def __request_attributes(self, device, keys, callback, type_is_client=False):
         if not keys:
@@ -187,6 +193,9 @@ class TBGatewayMqttClient(TBDeviceMqttClient):
 
     def gw_set_server_side_rpc_request_handler(self, handler):
         self.devices_server_side_rpc_request_handler = handler
+
+    def gw_set_devices_device_actions_handler(self, handler):
+        self.devices_device_actions_handler = handler
 
     def gw_send_rpc_reply(self, device, req_id, resp, quality_of_service):
         if quality_of_service is None:

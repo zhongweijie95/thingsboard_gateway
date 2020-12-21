@@ -267,6 +267,7 @@ class TBGatewayService:
     def subscribe_to_required_topics(self):
         self.tb_client.client.gw_set_server_side_rpc_request_handler(self._rpc_request_handler)
         self.tb_client.client.set_server_side_rpc_request_handler(self._rpc_request_handler)
+        self.tb_client.client.gw_set_devices_device_actions_handler(self._device_actions_handler)
         self.tb_client.client.subscribe_to_all_attributes(self._attribute_update_callback)
         self.tb_client.client.gw_subscribe_to_all_attributes(self._attribute_update_callback)
 
@@ -455,6 +456,10 @@ class TBGatewayService:
                 devices_data_in_event_pack[device] = {"telemetry": [], "attributes": {}}
         except Exception as e:
             log.exception(e)
+
+    def _device_actions_handler(self, content):
+        if content.get('action') == 'DELETED':
+            self.del_device(content["device"])
 
     def _rpc_request_handler(self, request_id, content):
         try:
